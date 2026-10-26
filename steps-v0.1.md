@@ -2,6 +2,13 @@
 
 > 本文件是下一輪 Codex 的執行計畫，**不是要求一次完成所有項目**。先完成證據充分、範圍最小的步驟；如無必要，勿增實體。
 
+## v0.1.0 狀態（2026-10-26）
+
+- [x] Step 0：完成既有行為基線與最小執行驗證。
+- [x] Step 1：完成 HLS Master／Media 辨識，並由 yt-dlp 列出及選擇格式。
+- [x] Step 2：移除五秒靜默提前停止；改由使用者關閉瀏覽器或 `--timeout` 結束。
+- [x] Step 3：完成 mock 與公開來源回歸驗證；使用者另已回報 Windows 實際探索及下載成功。
+
 ## Step 0 — 建立既有行為基線（先做）
 - 閱讀 `video-get.py`，確認直接 yt-dlp、`--spy`、候選顯示、Referer 傳遞、輸出路徑的現況。
 - 執行 `python -m py_compile video-get.py`、`python video-get.py --help`；可行時用合法且可重現的公開測試資源驗證。
