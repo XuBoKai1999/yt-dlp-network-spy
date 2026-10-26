@@ -33,7 +33,7 @@ def kind(url, content_type="", body=b""):
 
 
 def yt_command(url, referer=None, output=None, cookies_browser=None, list_formats=False):
-    cmd = ["yt-dlp", "--no-playlist"]
+    cmd = ["yt-dlp", "--no-playlist", "--quiet", "--progress"]
     if list_formats:
         cmd.append("--list-formats")
     if output:
@@ -94,7 +94,7 @@ def main():
                             pass
                     if detected and u not in candidates:
                         candidates[u] = (detected, response.request.headers.get("referer", args.url))
-                        print(f"  [{len(candidates)}] {detected}: {u[:180]}", flush=True)
+                        print(f"  [{len(candidates)}] {detected} from {urlsplit(u).hostname or 'unknown host'}", flush=True)
                 except Exception:
                     pass
 
@@ -102,32 +102,32 @@ def main():
             try:
                 page.goto(args.url, wait_until="domcontentloaded", timeout=30000)
             except Exception as exc:
-                print(f"Navigation warning: {exc}")
-            print(f"Listening for up to {args.timeout}s. Play video now...", flush=True)
-            # Playwright event loop pumps response events while waiting.
-            # Stop shortly after detecting media; otherwise allow time to click Play.
-            quiet_ticks = 0
-            previous_count = 0
+                print(f"Navigation warning: {type(exc).__name__}")
+            print(f"Listening for up to {args.timeout}s. Play or change quality, then close the browser window to finish.", flush=True)
             for _ in range(max(1, args.timeout)):
-                page.wait_for_timeout(1000)
-                if candidates:
-                    quiet_ticks = quiet_ticks + 1 if len(candidates) == previous_count else 0
-                    if quiet_ticks >= 5:
+                if not browser.is_connected() or page.is_closed():
+                    break
+                try:
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    if not browser.is_connected() or page.is_closed():
                         break
-                previous_count = len(candidates)
-            browser.close()
+                    raise
+            if browser.is_connected():
+                browser.close()
     except Exception as exc:
-        print(f"Browser error: {exc}", file=sys.stderr)
+        print(f"Browser error: {type(exc).__name__}", file=sys.stderr)
         print("For Chromium install: python -m playwright install chromium", file=sys.stderr)
         return 2
 
     if not candidates:
         print("No supported media URLs detected. Check if video played, or if it uses DRM.")
         return 1
-    entries = sorted(candidates.items(), key=lambda item: 0 if item[1][0].startswith("HLS") else {"DASH": 1, "VIDEO": 2}[item[1][0]])
+    priority = {"HLS master": 0, "HLS": 1, "HLS media": 1, "DASH": 2, "VIDEO": 3}
+    entries = sorted(candidates.items(), key=lambda item: priority[item[1][0]])
     print("\nDiscovered media:")
     for i, (url, (media_kind, _)) in enumerate(entries, 1):
-        print(f"  {i}. [{media_kind}] {url[:160]}")
+        print(f"  {i}. [{media_kind}] {urlsplit(url).hostname or 'unknown host'}")
     while True:
         choice = input(f"Select 1-{len(entries)} (Enter=1, q=quit): ").strip().lower()
         if choice == "q":
