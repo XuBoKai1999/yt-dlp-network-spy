@@ -139,3 +139,54 @@
 - 啟用 Ponytail 後將範圍限制在基線、證據與工作紀錄；不新增 parser、抽象層或測試框架。
 - 執行命令首次受沙箱限制，依規則申請受控執行；成功後明確區分命令 PASS、模擬 PASS、靜態分析與端對端未測。
 - 最終決策是本輪不修程式；最優先的後續改動是重用 yt-dlp 格式探索，並處理五秒過早停止，而不是自行推測高畫質 URL。
+
+---
+
+# Codex Task 001 — Step 1 執行紀錄
+
+> 對話保存範圍：以下是同日後續工作階段可見對話與決策摘要，不是逐字稿。公開測試來源不含 Cookie、token、授權資訊或簽章參數。
+
+## 使用者原意與範圍
+
+- 使用者要求執行 `steps-v0.1.md` 的 Step 1。
+- 延續 Ponytail full；只修改 `video-get.py` 與本紀錄，不新增依賴、模組、完整 HLS parser 或測試框架。
+- Step 2 的五秒停止條件刻意保留，避免本輪混入另一項控制流程變更。
+
+## 實作決策
+
+1. `kind()` 可接收已取得的 response body，但只辨識 HLS 標準標記：
+   - `#EXT-X-STREAM-INF`／`#EXT-X-I-FRAME-STREAM-INF` → `HLS master`
+   - `#EXTINF:`／`#EXT-X-TARGETDURATION:` → `HLS media`
+   - body 不可得或無法判斷 → 保留 `HLS`
+2. Playwright 只對已依 URL／Content-Type 判為 HLS 的 response 讀 body。body 讀取失敗時仍保留候選，不讓 manifest 分類影響既有探索能力。
+3. 使用者選定候選後，先以相同 Referer／Cookies 參數執行 `yt-dlp --list-formats`。格式驗證失敗時不嘗試下載，並透傳 yt-dlp return code。
+4. 驗證成功後仍不傳 `-f`，由 yt-dlp 預設格式選擇與 FFmpeg 合併；沒有自行排序 bitrate 或解析 rendition URL。
+5. 若判定為 `HLS media`，下載前明示可能存在其他畫質，但不能安全推導。
+
+## 驗證結果
+
+| 項目 | 結果 | 證據／限制 |
+|---|---|---|
+| `python -m py_compile video-get.py` | PASS | exit 0 |
+| `python video-get.py --help` | PASS | exit 0，CLI 未新增選項 |
+| Master／Media／未知 HLS assertions | PASS | 標準 tag 的最小 bytes fixtures 均得到預期分類 |
+| `yt_command(..., list_formats=True)` | PASS | 參數包含 `--no-playlist --list-formats`，並保留 Referer／Cookies |
+| 公開 Master 實際分類 | PASS | 讀取 Apple 公開 HLS 範例的 6,289-byte manifest，判為 `HLS master` |
+| 公開 Master `yt-dlp -F` | PASS | 實際列出 audio-only 與 270p、360p、432p、540p、720p、1080p 多組格式；未下載媒體 |
+| yt-dlp 預設選擇模擬 | PASS | `--simulate` 選到 `8366+aud2-English`、1920x1080；這只證明該公開 Master 當下提供的格式與預設選擇 |
+| Playwright 端對端 | NOT TESTED | 未啟動瀏覽器、播放頁面或驗證 response callback 的實站事件時序 |
+| 單一 Media Playlist 實站 | NOT TESTED | 分類與提示以最小 fixture 驗證；未主張能找到未公開的其他畫質 |
+
+公開測試來源：`https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8`。此 URL 無 query、簽章或授權資訊。
+
+## 本輪可見代理回覆摘要
+
+- 代理說明先重讀規範、確認 caller 與風險，再將修改限制在 manifest 分類與 yt-dlp 格式驗證。
+- 初版實作後發現 response body 若讀取失敗會連候選一起遺失，因此立即改為退回一般 `HLS`，保留既有行為。
+- 公開 Master 驗證顯示 yt-dlp 能從單一 Master 列出最高至 1080p 的多組格式，且不需要依瀏覽器已觀察到的 rendition 猜測 URL。
+
+## 未解事項
+
+- Step 2 的五秒靜默停止仍可能漏掉較晚出現的 Master 或 rendition。
+- Playwright context 的授權狀態仍未完整傳給 yt-dlp；本輪沒有真實授權案例，未擴張成 header/session 匯出功能。
+- `response.body()` 在各網站、長時間直播及不同 Playwright browser channel 的實際行為仍需 Step 3 端對端驗證。

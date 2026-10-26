@@ -15,10 +15,15 @@ MEDIA_EXT = re.compile(r"\.(?:m3u8|mpd|mp4|webm|mov)(?:$|[?#])", re.I)
 MEDIA_TYPES = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml", "video/mp4", "video/webm", "video/quicktime")
 
 
-def kind(url, content_type=""):
+def kind(url, content_type="", body=b""):
     path = urlsplit(url).path.lower()
     ct = content_type.lower().split(";")[0].strip()
     if path.endswith(".m3u8") or "mpegurl" in ct:
+        text = body.decode("utf-8", "ignore") if isinstance(body, bytes) else body
+        if "#EXT-X-STREAM-INF" in text or "#EXT-X-I-FRAME-STREAM-INF" in text:
+            return "HLS master"
+        if "#EXTINF:" in text or "#EXT-X-TARGETDURATION:" in text:
+            return "HLS media"
         return "HLS"
     if path.endswith(".mpd") or ct == "application/dash+xml":
         return "DASH"
@@ -27,8 +32,10 @@ def kind(url, content_type=""):
     return None
 
 
-def yt_command(url, referer=None, output=None, cookies_browser=None):
+def yt_command(url, referer=None, output=None, cookies_browser=None, list_formats=False):
     cmd = ["yt-dlp", "--no-playlist"]
+    if list_formats:
+        cmd.append("--list-formats")
     if output:
         cmd += ["-P", output]
     if referer:
@@ -80,6 +87,11 @@ def main():
                     u = response.url
                     ct = response.headers.get("content-type", "")
                     detected = kind(u, ct)
+                    if detected == "HLS":
+                        try:
+                            detected = kind(u, ct, response.body())
+                        except Exception:
+                            pass
                     if detected and u not in candidates:
                         candidates[u] = (detected, response.request.headers.get("referer", args.url))
                         print(f"  [{len(candidates)}] {detected}: {u[:180]}", flush=True)
@@ -112,7 +124,7 @@ def main():
     if not candidates:
         print("No supported media URLs detected. Check if video played, or if it uses DRM.")
         return 1
-    entries = sorted(candidates.items(), key=lambda item: {"HLS": 0, "DASH": 1, "VIDEO": 2}[item[1][0]])
+    entries = sorted(candidates.items(), key=lambda item: 0 if item[1][0].startswith("HLS") else {"DASH": 1, "VIDEO": 2}[item[1][0]])
     print("\nDiscovered media:")
     for i, (url, (media_kind, _)) in enumerate(entries, 1):
         print(f"  {i}. [{media_kind}] {url[:160]}")
@@ -125,7 +137,15 @@ def main():
         if choice.isdigit() and 1 <= int(choice) <= len(entries):
             break
         print("Invalid selection.")
-    selected_url, (_, referer) = entries[int(choice)-1]
+    selected_url, (media_kind, referer) = entries[int(choice)-1]
+    print("Checking available formats with yt-dlp...", flush=True)
+    cmd = yt_command(selected_url, referer=referer or args.url, cookies_browser=args.cookies_browser, list_formats=True)
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print("yt-dlp could not verify this media source.", file=sys.stderr)
+        return result.returncode
+    if media_kind == "HLS media":
+        print("This is a media playlist; higher qualities may exist but cannot be inferred safely.")
     print("Downloading with yt-dlp...", flush=True)
     cmd = yt_command(selected_url, referer=referer or args.url, output=args.output, cookies_browser=args.cookies_browser)
     return subprocess.run(cmd).returncode
